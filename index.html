@@ -44,12 +44,21 @@
             gap: 15px;
         }
         .control-group { display: flex; align-items: center; gap: 8px; }
-        .control-group label { font-weight: bold; }
+        .control-group label { font-weight: bold; white-space: nowrap; }
         .control-group input {
             width: 60px;
             padding: 8px;
             border: 1px solid #ccc;
             border-radius: 4px;
+            text-align: center;
+        }
+        .count-display {
+            font-size: 13px;
+            color: #666;
+            background: #eef2f7;
+            padding: 4px 8px;
+            border-radius: 4px;
+            min-width: 40px;
             text-align: center;
         }
         .btn {
@@ -61,6 +70,7 @@
             font-weight: bold;
             transition: all 0.3s ease;
             color: white;
+            white-space: nowrap;
         }
         .btn-primary { background-color: var(--primary-color); }
         .btn-success { background-color: var(--success-color); }
@@ -100,6 +110,78 @@
             background-color: #d4edda !important;
             border-color: #28a745 !important;
             color: #155724 !important;
+            position: relative;
+        }
+        .learning-mode .options label.correct-answer::before {
+            content: "✓ ";
+            font-weight: bold;
+            color: #28a745;
+            margin-right: 5px;
+        }
+        .learning-mode .options label.correct-answer input {
+            accent-color: #28a745;
+        }
+        .learning-mode .options label.incorrect-option {
+            opacity: 0.6;
+        }
+        
+        .result-feedback {
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+        .correct { background-color: #e9f7ef; color: var(--success-color); border-left: 4px solid var(--success-color); }
+        .incorrect { background-color: #fdedec; color: var(--danger-color); border-left: 4px solid var(--danger-color); }
+        .explanation { font-size: 0.9em; color: #555; margin-top: 8px; padding-left: 10px; border-left: 3px solid #ccc; }
+
+        #scoreResult {
+            text-align: center;
+            font-size: 1.5em;
+            padding: 20px;
+            display: none;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        #examArea { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1 id="mainTitle">📚 系统运维 模拟考试系统</h1>
+        <p>上传题库 → 设置题量 → 开始考试 → 导出错题/重考/学习</p>
+    </header>
+
+    <div class="control-panel">
+        <input type="file" id="fileInput" accept=".xls,.xlsx" style="display:none;" onchange="handleFileSelect(event)">
+        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">1️⃣ 选择题库文件</button>
+        <span id="file-name">未选择文件</span>
+
+        <div class="control-group">
+            <label>单选:</label>
+            <input type="number" id="numSingle" value="50" min="1" max="200">
+            <span class="count-display" id="countSingle">/0</span>
+        </div>
+        <div class="control-group">
+            <label>多选:</label>
+            <input type="number" id="numMulti" value="30" min="1" max="200">
+            <span class="count-display" id="countMulti">/0</span>
+        </div>
+        <div class="control-group">
+            <label>判断:</label>
+            <input type="number" id="numJudge" value="20" min="1" max="200">
+            <span class="count-display" id="countJudge">/0</span>
+        </div>
+        
+        <button class="btn btn-warning" onclick="startExam()">2️⃣ 开始组卷</button>
+        <button class="btn btn-success" onclick="submitExam()" id="submitBtn" disabled>3️⃣ 提交并评分</button>
+        <button class="btn btn-danger" onclick="exportWrongQuestions()" style="display:none;" id="exportBtn">📥 导出错题</button>
+        <button class="btn btn-purple" onclick="restartWrongExam()" style="display:none;" id="retryBtn">🔄 错题重考</button>
+        <button class="btn bt            color: #155724 !important;
             position: relative;
         }
         .learning-mode .options label.correct-answer::before {
