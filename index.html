@@ -376,8 +376,8 @@ function clearExamState() {
 // 获取GitHub仓库中的文件列表
 async function loadGithubFileList() {
     try {
-        const username = '您的用户名'; // 修改为您的GitHub用户名
-        const repo = '您的仓库名';     // 修改为您的仓库名
+        const username = 'gan10011'; // 修改为您的GitHub用户名
+        const repo = 'exam-test';     // 修改为您的仓库名
         const branch = 'main';         // 或 'master'
         
         const response = await fetch(`https://raw.githubusercontent.com/${username}/${repo}/${branch}/filelist.json`);
