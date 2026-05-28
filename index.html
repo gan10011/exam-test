@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>智能考试系统 · 学习/练习/统计看板</title>
+    <title>智能考试系统 · 学习/练习/统计看板（带进度保存）</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
     <style>
+        /* 样式保持不变，为节省篇幅此处省略（实际使用时会保留完整样式） */
         * { box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -14,14 +15,7 @@
             padding: 12px;
             line-height: 1.4;
         }
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            background: white;
-            padding: 16px;
-            border-radius: 20px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-        }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 16px; border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
         header { text-align: center; border-bottom: 2px solid #eee; margin-bottom: 18px; padding-bottom: 10px; }
         h1 { color: #2c3e50; margin: 0; font-size: 1.6rem; }
         .dashboard { display: flex; gap: 18px; flex-wrap: wrap; }
@@ -98,9 +92,8 @@
 </head>
 <body>
 <div class="container">
-    <header><h1>📚 智能考试系统 · 学习/练习/统计看板</h1><p>动态上传 | 哈希统计 | 错题本 | 进度跟踪 | 逐题/整卷练习</p></header>
+    <header><h1>📚 智能考试系统 · 学习/练习/统计看板</h1><p>动态上传 | 哈希统计 | 错题本 | 进度跟踪 | 逐题/整卷练习 | 自动保存答题进度</p></header>
     <div class="dashboard">
-        <!-- 左侧题库管理 + 统计看板 -->
         <div class="library-panel">
             <div class="panel-title"><span>📂 题库管理</span><button class="btn-primary" id="addLibraryBtn" style="padding:4px 12px;">+ 添加Excel</button></div>
             <div id="librariesContainer">暂无题库，点击上方按钮添加 .xls/.xlsx 文件</div>
@@ -128,7 +121,6 @@
                 <div id="dailyProgress" style="margin-top:10px; font-size:0.75rem; text-align:center;"></div>
             </div>
         </div>
-        <!-- 右侧考试区 -->
         <div class="exam-panel">
             <div class="control-panel">
                 <div class="control-group"><label>单选</label><input type="number" id="numSingle" value="50" min="1" max="300"></div>
@@ -143,7 +135,6 @@
             <div id="scoreResult"></div>
             <div id="examArea"></div>
         </div>
-        <!-- 更多功能区域 -->
         <div class="func-panel">
             <div class="panel-title"><span>⚙️ 更多功能</span></div>
             <div class="more-menu">
@@ -175,9 +166,10 @@ let timerInterval = null;
 let startTime = null;
 let currentWeightMode = null;
 let dailyGoal = 20;
-let practiceModeType = 'whole';
+let practiceModeType = 'whole';    // 'whole' 或 'single'
 let singlePracticeAnswered = {};
 let currentPracticeQuestions = [];
+let currentMode = null;             // 'exam', 'practice_whole', 'practice_single', 'learning'
 
 // ====================== 存储与工具 ======================
 function loadStats() {
@@ -255,7 +247,7 @@ function escapeHtml(str) {
     return str.replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m; });
 }
 
-// ====================== Excel解析 ======================
+// ====================== Excel解析（完整实现） ======================
 function parseWorkbookToQuestions(workbook) {
     const result = { single: [], multi: [], judge: [] };
     workbook.SheetNames.forEach(sheetName => {
@@ -340,6 +332,7 @@ function addLibraryFromFile(file) {
         renderLibraries();
         updateStatsPanel();
         showMessage(`✅ 添加 ${file.name} | 单选:${libData.single.length} 多选:${libData.multi.length} 判断:${libData.judge.length}`);
+        localStorage.removeItem(PROGRESS_KEY);
     };
     reader.readAsArrayBuffer(file);
 }
@@ -374,6 +367,7 @@ window.updateLibRatio = function(id, val) {
     let lib = loadedLibraries.find(l => l.id === id);
     if (lib) lib.ratio = ratio;
     renderLibraries();
+    localStorage.removeItem(PROGRESS_KEY);
 };
 window.removeLibrary = function(id) {
     loadedLibraries = loadedLibraries.filter(l => l.id !== id);
@@ -384,6 +378,7 @@ window.removeLibrary = function(id) {
     stopTimer();
     updateStatsPanel();
     showMessage('已删除题库');
+    localStorage.removeItem(PROGRESS_KEY);
 };
 
 // ====================== 抽题权重 ======================
@@ -421,6 +416,122 @@ function composeExamByRatios(totalS, totalM, totalJ) {
     return [...singleList, ...multiList, ...judgeList];
 }
 
+// ====================== 进度保存与恢复 ======================
+const PROGRESS_KEY = 'exam_progress_v1';
+function saveProgress() {
+    if ((currentMode === 'exam' || currentMode === 'practice_whole' || currentMode === 'practice_single') && currentExam.length > 0 && !document.getElementById('submitBtn').disabled) {
+        const answers = {};
+        currentExam.forEach((item, idx) => {
+            if (item.type === 'judge') {
+                const sel = document.querySelector(`input[name="ans_${idx}"]:checked`);
+                if (sel) answers[idx] = sel.value;
+            } else if (item.type === 'single') {
+                const sel = document.querySelector(`input[name="ans_${idx}"]:checked`);
+                if (sel) answers[idx] = sel.value;
+            } else {
+                const checks = document.querySelectorAll(`input[name^="ans_${idx}_"]:checked`);
+                if (checks.length) {
+                    answers[idx] = Array.from(checks).map(c => c.value).sort().join('');
+                }
+            }
+        });
+        const progress = {
+            mode: currentMode,
+            questions: currentExam,
+            answers: answers,
+            startTime: startTime,
+            practiceModeType: practiceModeType,
+            singlePracticeAnswered: singlePracticeAnswered,
+            currentPracticeQuestions: currentPracticeQuestions
+        };
+        localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+    } else {
+        localStorage.removeItem(PROGRESS_KEY);
+    }
+}
+function restoreProgress() {
+    const saved = localStorage.getItem(PROGRESS_KEY);
+    if (!saved) return false;
+    try {
+        const progress = JSON.parse(saved);
+        if (!progress.questions || !progress.questions.length) return false;
+        if (confirm(`发现上次未完成的${progress.mode === 'exam' ? '考试' : '练习'}，是否恢复进度？`)) {
+            currentMode = progress.mode;
+            practiceModeType = progress.practiceModeType || 'whole';
+            singlePracticeAnswered = progress.singlePracticeAnswered || {};
+            currentPracticeQuestions = progress.currentPracticeQuestions || [];
+            currentExam = progress.questions;
+            startTime = progress.startTime;
+            if (startTime) {
+                const elapsed = Date.now() - startTime;
+                if (elapsed < 0) startTime = Date.now();
+                startTimer();
+            } else {
+                startTimer();
+            }
+            if (currentMode === 'exam') {
+                renderExam(currentExam, false);
+                document.getElementById('submitBtn').disabled = false;
+                document.getElementById('exportBtn').style.display = 'none';
+                document.getElementById('retryCurrentBtn').style.display = 'none';
+            } else if (currentMode === 'practice_whole') {
+                currentPracticeQuestions = currentExam;
+                renderPracticeExam(currentExam, false);
+                document.getElementById('submitBtn').disabled = true;
+            } else if (currentMode === 'practice_single') {
+                currentPracticeQuestions = currentExam;
+                renderPracticeExam(currentExam, true);
+                document.getElementById('submitBtn').disabled = true;
+            }
+            document.getElementById('examArea').style.display = 'block';
+            setTimeout(() => {
+                for (let idx in progress.answers) {
+                    const userAns = progress.answers[idx];
+                    const item = currentExam[idx];
+                    if (!item) continue;
+                    if (item.type === 'judge') {
+                        const radio = document.querySelector(`input[name="ans_${idx}"][value="${userAns}"]`);
+                        if (radio) radio.checked = true;
+                    } else if (item.type === 'single') {
+                        const radio = document.querySelector(`input[name="ans_${idx}"][value="${userAns}"]`);
+                        if (radio) radio.checked = true;
+                    } else {
+                        for (let ch of userAns) {
+                            const checkbox = document.querySelector(`input[name="ans_${idx}_${ch}"]`);
+                            if (checkbox) checkbox.checked = true;
+                        }
+                    }
+                }
+            }, 50);
+            showMessage('已恢复上次答题进度');
+            return true;
+        } else {
+            localStorage.removeItem(PROGRESS_KEY);
+            return false;
+        }
+    } catch(e) {
+        console.error(e);
+        return false;
+    }
+}
+window.addEventListener('beforeunload', () => {
+    if ((currentMode === 'exam' || currentMode === 'practice_whole' || currentMode === 'practice_single') && currentExam.length > 0 && !document.getElementById('submitBtn').disabled) {
+        saveProgress();
+    }
+});
+let saveTimeout;
+function autoSaveProgress() {
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => { saveProgress(); }, 500);
+}
+function attachOptionListeners() {
+    const optionsDivs = document.querySelectorAll('.options');
+    optionsDivs.forEach(div => {
+        div.removeEventListener('change', autoSaveProgress);
+        div.addEventListener('change', autoSaveProgress);
+    });
+}
+
 // ====================== 正常考试渲染与评分 ======================
 function startExam() {
     if (!loadedLibraries.length) { showMessage('请先添加题库', true); return; }
@@ -433,6 +544,7 @@ function startExam() {
     if (!exam) return;
     currentExam = exam;
     currentWrongQuestions = [];
+    currentMode = 'exam';
     renderExam(currentExam, false);
     document.getElementById('examArea').style.display = 'block';
     document.getElementById('scoreResult').style.display = 'none';
@@ -441,6 +553,7 @@ function startExam() {
     document.getElementById('submitBtn').disabled = false;
     stopTimer();
     startTimer();
+    localStorage.removeItem(PROGRESS_KEY);
 }
 function renderExam(data, showAnswers) {
     let html = '';
@@ -462,6 +575,7 @@ function renderExam(data, showAnswers) {
     });
     if (!showAnswers) html += `<div class="bottom-submit"><button class="btn btn-success" onclick="submitExam()" style="font-size:16px;">✅ 提交评分并定位错题</button></div>`;
     document.getElementById('examArea').innerHTML = html;
+    attachOptionListeners();
 }
 function submitExam() {
     if (!currentExam.length) return;
@@ -519,99 +633,7 @@ function submitExam() {
     if (firstWrongIndex !== -1) document.getElementById(`q-${firstWrongIndex}`).scrollIntoView({ behavior: 'smooth', block: 'center' });
     addExamRecord(score, currentExam.length, 'exam');
     updateStatsPanel();
-}
-
-// ====================== 四个核心功能 ======================
-function exportWrongQuestions() {
-    if (!wrongBook.length) { showMessage('错题本为空，无错题可导出', true); return; }
-    const wsData = wrongBook.map((w, idx) => ({
-        序号: idx+1,
-        题目: w.q,
-        选项: w.type !== 'judge' ? (() => { let str=''; for(let k in w.options) str+=`${k}.${w.options[k]} `; return str; })() : '对/错',
-        正确答案: w.answer,
-        解析: w.explanation,
-        错题次数: w.wrongCount
-    }));
-    const ws = XLSX.utils.json_to_sheet(wsData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "错题本");
-    XLSX.writeFile(wb, `错题本_${new Date().toLocaleDateString()}.xlsx`);
-    showMessage('错题已导出');
-}
-function restartCurrentWrong() {
-    if (!currentWrongQuestions.length) { showMessage('本次考试没有错题，无需重考', true); return; }
-    const retryExam = currentWrongQuestions.map(w => ({
-        q: w.q, type: w.type, options: w.options, answer: w.answer,
-        explanation: w.explanation, libName: w.libName, id: w.id
-    }));
-    currentExam = retryExam;
-    currentWrongQuestions = [];
-    renderExam(currentExam, false);
-    document.getElementById('examArea').style.display = 'block';
-    document.getElementById('scoreResult').style.display = 'none';
-    document.getElementById('exportBtn').style.display = 'none';
-    document.getElementById('retryCurrentBtn').style.display = 'none';
-    document.getElementById('submitBtn').disabled = false;
-    stopTimer();
-    startTimer();
-    showMessage(`开始重考，共 ${retryExam.length} 道错题`);
-}
-function wrongBookCompose() {
-    if (!wrongBook.length) { showMessage('错题本为空，无法组卷', true); return; }
-    const exam = wrongBook.map(w => ({
-        q: w.q, type: w.type, options: w.options, answer: w.answer,
-        explanation: w.explanation, libName: w.libName, id: w.id
-    }));
-    currentExam = exam;
-    currentWrongQuestions = [];
-    renderExam(currentExam, false);
-    document.getElementById('examArea').style.display = 'block';
-    document.getElementById('scoreResult').style.display = 'none';
-    document.getElementById('exportBtn').style.display = 'none';
-    document.getElementById('retryCurrentBtn').style.display = 'none';
-    document.getElementById('submitBtn').disabled = false;
-    stopTimer();
-    startTimer();
-    showMessage(`错题组卷完成，共 ${exam.length} 题`);
-}
-function unseenCompose() {
-    if (!loadedLibraries.length) { showMessage('请先添加题库', true); return; }
-    let allQuestions = [];
-    loadedLibraries.forEach(lib => {
-        allQuestions.push(...lib.data.single.map(q => ({ ...q, type: 'single' })));
-        allQuestions.push(...lib.data.multi.map(q => ({ ...q, type: 'multi' })));
-        allQuestions.push(...lib.data.judge.map(q => ({ ...q, type: 'judge' })));
-    });
-    const unseen = allQuestions.filter(q => {
-        const stat = questionStats[q.id];
-        return !stat || stat.total === 0;
-    });
-    if (unseen.length === 0) { showMessage('没有未考过的题目', true); return; }
-    const totalS = Math.min(parseInt(document.getElementById('numSingle').value), unseen.filter(q => q.type === 'single').length);
-    const totalM = Math.min(parseInt(document.getElementById('numMulti').value), unseen.filter(q => q.type === 'multi').length);
-    const totalJ = Math.min(parseInt(document.getElementById('numJudge').value), unseen.filter(q => q.type === 'judge').length);
-    const singlePool = unseen.filter(q => q.type === 'single');
-    const multiPool = unseen.filter(q => q.type === 'multi');
-    const judgePool = unseen.filter(q => q.type === 'judge');
-    const shuffleTake = (arr, n) => {
-        if (n === 0) return [];
-        const copy = [...arr];
-        for (let i = copy.length - 1; i > 0; i--) { let j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
-        return copy.slice(0, n);
-    };
-    const exam = [...shuffleTake(singlePool, totalS), ...shuffleTake(multiPool, totalM), ...shuffleTake(judgePool, totalJ)];
-    if (exam.length === 0) { showMessage('所选题型没有未考题', true); return; }
-    currentExam = exam;
-    currentWrongQuestions = [];
-    renderExam(currentExam, false);
-    document.getElementById('examArea').style.display = 'block';
-    document.getElementById('scoreResult').style.display = 'none';
-    document.getElementById('exportBtn').style.display = 'none';
-    document.getElementById('retryCurrentBtn').style.display = 'none';
-    document.getElementById('submitBtn').disabled = false;
-    stopTimer();
-    startTimer();
-    showMessage(`未考题组卷完成，共 ${exam.length} 题`);
+    localStorage.removeItem(PROGRESS_KEY);
 }
 
 // ====================== 学习模式 ======================
@@ -623,6 +645,7 @@ function learningMode() {
     let exam = composeExamByRatios(totalS, totalM, totalJ);
     if (!exam) return;
     currentExam = exam;
+    currentMode = 'learning';
     renderExam(currentExam, true);
     document.getElementById('examArea').style.display = 'block';
     document.getElementById('scoreResult').style.display = 'none';
@@ -631,22 +654,25 @@ function learningMode() {
     document.getElementById('submitBtn').disabled = true;
     stopTimer();
     showMessage('学习模式：题目已展示答案，可自由浏览');
+    localStorage.removeItem(PROGRESS_KEY);
 }
 
-// ====================== 练习模式（逐题/整卷） ======================
+// ====================== 练习模式 ======================
 function practiceMode() {
     if (!loadedLibraries.length) { showMessage('请先添加题库', true); return; }
     const modeChoice = confirm('点击“确定”进入整卷模式（做完统一提交）\n点击“取消”进入逐题模式（每做一题立即验证）');
     const isSingleMode = !modeChoice;
     practiceModeType = isSingleMode ? 'single' : 'whole';
+    currentMode = isSingleMode ? 'practice_single' : 'practice_whole';
     let totalS = parseInt(document.getElementById('numSingle').value);
     let totalM = parseInt(document.getElementById('numMulti').value);
     let totalJ = parseInt(document.getElementById('numJudge').value);
     let exam = composeExamByRatios(totalS, totalM, totalJ);
     if (!exam) return;
     currentPracticeQuestions = exam;
+    currentExam = exam;
     singlePracticeAnswered = {};
-    renderPracticeExam(currentPracticeQuestions, isSingleMode);
+    renderPracticeExam(currentExam, isSingleMode);
     document.getElementById('examArea').style.display = 'block';
     document.getElementById('scoreResult').style.display = 'none';
     document.getElementById('exportBtn').style.display = 'none';
@@ -655,6 +681,7 @@ function practiceMode() {
     stopTimer();
     startTimer();
     showMessage(isSingleMode ? '进入逐题练习模式，每道题可单独提交验证' : '进入整卷练习模式，全部做完后统一提交');
+    localStorage.removeItem(PROGRESS_KEY);
 }
 function renderPracticeExam(data, isSingleMode) {
     let html = '';
@@ -689,6 +716,7 @@ function renderPracticeExam(data, isSingleMode) {
         html += `<div class="bottom-submit"><button class="btn btn-success" onclick="submitPracticeWhole()" style="font-size:16px;">✅ 提交全部并记录错题</button></div>`;
     }
     document.getElementById('examArea').innerHTML = html;
+    attachOptionListeners();
 }
 function markSelectedOption(idx, item, userAns) {
     const optionsDiv = document.getElementById(`options-${idx}`);
@@ -712,7 +740,7 @@ function markSelectedOption(idx, item, userAns) {
     });
 }
 function checkSingleQuestion(idx) {
-    const item = currentPracticeQuestions[idx];
+    const item = currentExam[idx];
     const qid = item.id;
     if (singlePracticeAnswered[qid]) { showMessage('本题已经提交过了，不可重复提交', true); return; }
     let userAns = '';
@@ -751,11 +779,12 @@ function checkSingleQuestion(idx) {
     updateStatsPanel();
     addExamRecord(isCorrect?1:0, 1, 'practice_single');
     showMessage(isCorrect ? '回答正确！' : '回答错误，已记录错题');
+    saveProgress();
 }
 function submitPracticeWhole() {
-    if (!currentPracticeQuestions.length) return;
-    let score = 0, wrongs = [];
-    currentPracticeQuestions.forEach((item, idx) => {
+    if (!currentExam.length) return;
+    let score = 0;
+    currentExam.forEach((item, idx) => {
         let isCorrect = false, userAns = '';
         if (item.type === 'judge') {
             let sel = document.querySelector(`input[name="ans_${idx}"]:checked`);
@@ -773,7 +802,7 @@ function submitPracticeWhole() {
         }
         if (userAns !== '未作答') updateQuestionStat(item.id, isCorrect);
         if (isCorrect) { score++; if (wrongBook.some(w => w.id === item.id)) removeFromWrongBook(item.id); }
-        else { if (userAns !== '未作答') addToWrongBook(item, userAns); wrongs.push(item); }
+        else { if (userAns !== '未作答') addToWrongBook(item, userAns); }
         let div = document.getElementById(`q-${idx}`);
         let fb = document.createElement('div');
         fb.className = `result-feedback ${isCorrect?'correct':'incorrect'}`;
@@ -782,15 +811,113 @@ function submitPracticeWhole() {
     });
     let resultDiv = document.getElementById('scoreResult');
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = `📊 练习结束！得分: ${score} / ${currentPracticeQuestions.length}`;
-    addExamRecord(score, currentPracticeQuestions.length, 'practice_whole');
+    resultDiv.innerHTML = `📊 练习结束！得分: ${score} / ${currentExam.length}`;
+    addExamRecord(score, currentExam.length, 'practice_whole');
     updateStatsPanel();
     const submitBtn = document.querySelector('#examArea .bottom-submit button');
     if (submitBtn) submitBtn.disabled = true;
-    showMessage(`练习完成，得分 ${score}/${currentPracticeQuestions.length}`);
+    showMessage(`练习完成，得分 ${score}/${currentExam.length}`);
+    localStorage.removeItem(PROGRESS_KEY);
 }
 
-// ====================== 错题本展示 ======================
+// ====================== 错题本等辅助功能（简化版，保持功能完整） ======================
+function exportWrongQuestions() {
+    if (!wrongBook.length) { showMessage('错题本为空，无错题可导出', true); return; }
+    const wsData = wrongBook.map((w, idx) => ({
+        序号: idx+1,
+        题目: w.q,
+        选项: w.type !== 'judge' ? (() => { let str=''; for(let k in w.options) str+=`${k}.${w.options[k]} `; return str; })() : '对/错',
+        正确答案: w.answer,
+        解析: w.explanation,
+        错题次数: w.wrongCount
+    }));
+    const ws = XLSX.utils.json_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "错题本");
+    XLSX.writeFile(wb, `错题本_${new Date().toLocaleDateString()}.xlsx`);
+    showMessage('错题已导出');
+}
+function restartCurrentWrong() {
+    if (!currentWrongQuestions.length) { showMessage('本次考试没有错题，无需重考', true); return; }
+    const retryExam = currentWrongQuestions.map(w => ({
+        q: w.q, type: w.type, options: w.options, answer: w.answer,
+        explanation: w.explanation, libName: w.libName, id: w.id
+    }));
+    currentExam = retryExam;
+    currentWrongQuestions = [];
+    currentMode = 'exam';
+    renderExam(currentExam, false);
+    document.getElementById('examArea').style.display = 'block';
+    document.getElementById('scoreResult').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+    document.getElementById('retryCurrentBtn').style.display = 'none';
+    document.getElementById('submitBtn').disabled = false;
+    stopTimer();
+    startTimer();
+    showMessage(`开始重考，共 ${retryExam.length} 道错题`);
+    localStorage.removeItem(PROGRESS_KEY);
+}
+function wrongBookCompose() {
+    if (!wrongBook.length) { showMessage('错题本为空，无法组卷', true); return; }
+    const exam = wrongBook.map(w => ({
+        q: w.q, type: w.type, options: w.options, answer: w.answer,
+        explanation: w.explanation, libName: w.libName, id: w.id
+    }));
+    currentExam = exam;
+    currentWrongQuestions = [];
+    currentMode = 'exam';
+    renderExam(currentExam, false);
+    document.getElementById('examArea').style.display = 'block';
+    document.getElementById('scoreResult').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+    document.getElementById('retryCurrentBtn').style.display = 'none';
+    document.getElementById('submitBtn').disabled = false;
+    stopTimer();
+    startTimer();
+    showMessage(`错题组卷完成，共 ${exam.length} 题`);
+    localStorage.removeItem(PROGRESS_KEY);
+}
+function unseenCompose() {
+    if (!loadedLibraries.length) { showMessage('请先添加题库', true); return; }
+    let allQuestions = [];
+    loadedLibraries.forEach(lib => {
+        allQuestions.push(...lib.data.single.map(q => ({ ...q, type: 'single' })));
+        allQuestions.push(...lib.data.multi.map(q => ({ ...q, type: 'multi' })));
+        allQuestions.push(...lib.data.judge.map(q => ({ ...q, type: 'judge' })));
+    });
+    const unseen = allQuestions.filter(q => {
+        const stat = questionStats[q.id];
+        return !stat || stat.total === 0;
+    });
+    if (unseen.length === 0) { showMessage('没有未考过的题目', true); return; }
+    const totalS = Math.min(parseInt(document.getElementById('numSingle').value), unseen.filter(q => q.type === 'single').length);
+    const totalM = Math.min(parseInt(document.getElementById('numMulti').value), unseen.filter(q => q.type === 'multi').length);
+    const totalJ = Math.min(parseInt(document.getElementById('numJudge').value), unseen.filter(q => q.type === 'judge').length);
+    const singlePool = unseen.filter(q => q.type === 'single');
+    const multiPool = unseen.filter(q => q.type === 'multi');
+    const judgePool = unseen.filter(q => q.type === 'judge');
+    const shuffleTake = (arr, n) => {
+        if (n === 0) return [];
+        const copy = [...arr];
+        for (let i = copy.length - 1; i > 0; i--) { let j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
+        return copy.slice(0, n);
+    };
+    const exam = [...shuffleTake(singlePool, totalS), ...shuffleTake(multiPool, totalM), ...shuffleTake(judgePool, totalJ)];
+    if (exam.length === 0) { showMessage('所选题型没有未考题', true); return; }
+    currentExam = exam;
+    currentWrongQuestions = [];
+    currentMode = 'exam';
+    renderExam(currentExam, false);
+    document.getElementById('examArea').style.display = 'block';
+    document.getElementById('scoreResult').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+    document.getElementById('retryCurrentBtn').style.display = 'none';
+    document.getElementById('submitBtn').disabled = false;
+    stopTimer();
+    startTimer();
+    showMessage(`未考题组卷完成，共 ${exam.length} 题`);
+    localStorage.removeItem(PROGRESS_KEY);
+}
 function showWrongListPreview() {
     const container = document.getElementById('wrongPreviewArea');
     if (!wrongBook.length) {
@@ -814,16 +941,12 @@ function showWrongListPreview() {
     html += '</div>';
     container.innerHTML = html;
 }
-
-// ====================== 重置所有统计 ======================
 function resetAllStats() {
     if (confirm('重置所有题目统计和错题本？不可恢复')) {
         localStorage.clear();
         location.reload();
     }
 }
-
-// ====================== 统计看板更新 ======================
 function updateStatsPanel() {
     if (!loadedLibraries.length) {
         document.getElementById('statsTable').querySelector('tbody').innerHTML = '<tr><td colspan="6">暂无题库</td></tr>';
@@ -862,8 +985,6 @@ function updateStatsPanel() {
     let dailyPercent = Math.min(100, (todayDone/dailyGoal)*100);
     document.getElementById('dailyProgress').innerHTML = `📅 今日完成 ${todayDone} / ${dailyGoal} 题 <div class="progress-bar"><div class="progress-fill" style="width:${dailyPercent}%; background:#f39c12;"></div></div>`;
 }
-
-// ====================== 辅助 ======================
 function startTimer() { if(timerInterval) clearInterval(timerInterval); startTime = Date.now(); timerInterval = setInterval(()=>{ let e=Date.now()-startTime; let m=Math.floor(e/60000), s=Math.floor((e%60000)/1000); document.getElementById('timer').innerText=`${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`; },1000); }
 function stopTimer() { if(timerInterval) clearInterval(timerInterval); timerInterval=null; }
 
@@ -893,7 +1014,9 @@ window.checkSingleQuestion = checkSingleQuestion;
 window.submitPracticeWhole = submitPracticeWhole;
 
 loadStats();
-updateStatsPanel();
+if (!restoreProgress()) {
+    updateStatsPanel();
+}
 </script>
 </body>
 </html>
